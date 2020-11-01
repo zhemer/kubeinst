@@ -1,0 +1,24 @@
+- name: Docker adding apt repository key for
+  shell: curl -s https://download.docker.com/linux/ubuntu/gpg | apt-key add -
+  args:
+    warn: false
+  become: yes
+
+- name: Docker adding repository
+  apt_repository:
+    repo: deb https://download.docker.com/linux/ubuntu disco stable
+    state: present
+  become: yes
+
+- name: Kubernetes adding apt repository key
+  shell: curl -s https://packages.cloud.google.com/apt/doc/apt-key.gpg | apt-key add -
+  args:
+    warn: false
+  become: yes
+
+- name: Kubernetes adding repository - '{{repo_kubernetes_apt}}'
+  apt_repository:
+    repo: deb https://apt.kubernetes.io/ kubernetes-xenial main
+    state: present
+#    update_cache: yes
+  become: yes

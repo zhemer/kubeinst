@@ -1,0 +1,21 @@
+# - name: Add Docker GPG key.
+#   rpm_key:
+#     key: "{{ docker_yum_gpg_key }}"
+#     state: present
+
+- name: Docker adding repository - '{{yum_repo_docker}}'
+  get_url:
+    url: '{{yum_repo_docker}}'
+    dest: '/etc/yum.repos.d/docker-ce.repo'
+    owner: root
+    group: root
+    mode: 0644
+  become: yes
+
+- name: Kubernetes adding repository - '{{yum_repo_kube}}'
+  yum_repository:
+    name: epel
+    description: Kubernetes repository
+    baseurl: '{{yum_repo_kube}}'
+    gpgcheck: no
+  become: yes

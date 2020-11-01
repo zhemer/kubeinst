@@ -1,0 +1,166 @@
+# tasks file for kube_inst
+
+# Installing Docker, Kubernetes, initializing master node with metrics-server, Kubernetes dashboard, Helm, nfs-server-provisioner
+
+- name: Get distribution name
+  set_fact:
+    os: '{{ansible_distribution|lower}}'
+
+# - debug: msg=OS:'{{os}}'
+- fail: msg='Force exit here {{os}}'
+
+# Installing Docker and Kubernetes packages
+- name: Docker removing old versions - '{{rm_packages_docker}}'
+  package:
+    name: '{{rm_packages_docker}}'
+    state: absent
+  become: yes
+
+- import_tasks: ubuntu.yaml
+  when: os == 'debian' or os == 'ubuntu'
+- import_tasks: centos.yaml
+  when: os == 'redhat' or os == 'centos'
+
+- name: Docker installing packages - '{{inst_packages_docker}}'
+  package:
+    name: '{{inst_packages_docker}}'
+    state: present
+    update_cache: yes
+  become: yes
+
+- name: Adding current user to docker group
+  user:
+    name: "{{ lookup('env','USER') }}"
+    groups: docker
+    append: yes
+  become: yes
+
+- name: Kubernetes installing packages - '{{inst_packages}}'
+  package:
+    name: '{{inst_packages}}'
+    state: present
+    update_cache: yes
+  become: yes
+
+
+- name: Enabling and running services '{{service_list}}'
+  systemd: name='{{item}}' state=started enabled=yes
+  with_items: '{{service_list}}'
+  become: yes
+
+
+# Installing Kubernetes
+- name: Kubernetes pulling images - '{{cmd_kube_pull}}'
+  command: '{{cmd_kube_pull}}'
+  become: yes
+  register: rc
+- debug: msg='{{rc.stdout_lines}}'
+
+- name: Setting /proc/sys/net/bridge/bridge-nf-call-iptables to 1
+  shell: echo 1 >/proc/sys/net/bridge/bridge-nf-call-iptables
+  args:
+    warn: false
+  become: yes
+
+- name: Kubernetes initializing cluster - '{{cmd_kube_init}}'
+  command: '{{cmd_kube_init}}'
+  become: yes
+  register: rc
+  ignore_errors: true
+- debug: msg='{{rc.stdout_lines}}'
+
+- name: Kubernetes setup configuration for current user - {{ansible_user_id}}
+  shell: '{{item}}'
+  with_items:
+    - "mkdir -p {{kube_user_home}}/.kube"
+    - 'cp -i /etc/kubernetes/admin.conf {{kube_user_home}}/.kube/config'
+    - 'chown {{ansible_user_id}}:{{ansible_user_id}} {{kube_user_home}}/.kube/config'
+  args:
+    warn: false
+
+- name: Kubernetes creating bash completion for kubectl
+  shell: kubectl completion bash > /etc/profile.d/kubectl.sh
+
+- name: Kubernetes enable to schedule pods on the control-plane - '{{cmd_kube_taint}}'
+  shell: '{{cmd_kube_taint}}'
+  register: rc
+  ignore_errors: true
+- debug: msg='{{rc.stdout_lines}}'
+
+- name: Kubernetes installing pod network - '{{cmd_kube_pod_network}}'
+  shell: '{{cmd_kube_pod_network}}'
+  register: rc
+- debug: msg='{{rc.stdout_lines}}'
+
+
+# Installing metrics-server
+- name: metrics-server installing  - '{{kube_inst_ms_inst}}'
+  shell: '{{kube_inst_ms_inst}}'
+  register: rc
+- debug: msg='{{rc.stdout_lines}}'
+
+- name: metrics-server applying two patches
+  shell: |
+    kubectl -n kube-system patch deployment metrics-server --type='json' -p='[{"op": "add", "path": "/spec/template/spec/containers/0/args/-", "value": "--kubelet-insecure-tls"}]'
+    kubectl -n kube-system patch deployment metrics-server --type='json' -p='[{"op": "replace", "path": "/spec/template/spec/hostAliases", "value": [{"ip":"{{ansible_default_ipv4.address}}", "hostnames":["{{ansible_nodename}}"]}]}]'
+  register: rc
+- debug: msg='{{rc.stdout_lines}}'
+
+
+# Installing Helm
+- name: Helm installing '{{helm_gz}}' into '{{helm_dst}}'
+  shell: |
+    wget -O /tmp/helm.tgz {{helm_gz}}
+    tar zxvf /tmp/helm.tgz linux-amd64/helm
+    chmod +x linux-amd64/helm
+    mv -f linux-amd64/helm {{helm_dst}}
+    rm -rf /tmp/helm.tgz linux-amd64
+  args:
+    warn: false
+
+- name: Helm adding repository '{{helm_repo}}'
+  shell: |
+    helm repo remove kube
+    helm repo add kube {{helm_repo}}
+    helm repo update
+
+- name: Helm installing nfs-server-provisioner '{{helm_inst_nfs}}'
+  shell: '{{helm_inst_nfs}}'
+
+
+# Installing Kubernetes dashboard
+- name: Kubernetes dashboard copying file dashboard-admin.yaml to /tmp
+  copy:
+    src: dashboard-admin.yaml
+    dest: /tmp
+
+- name: Kubernetes dashboard installing '{{kube_dashboard}}' and applying patch /tmp/dashboard-admin.yaml
+  shell: |
+    {{kube_dashboard}}
+    kubectl apply -f /tmp/dashboard-admin.yaml
+    ns=kubernetes-dashboard
+    kubectl patch deployment $ns --namespace $ns --type='json' -p='[{"op": "replace", "path": "/spec/template/spec/containers/0/args", "value": ["--auto-generate-certificates","--enable-insecure-login","--enable-skip-login","--namespace=kubernetes-dashboard"]}]'
+  register: rc
+- debug: msg='{{rc.stdout_lines}}'
+
+- name: Kubernetes dashboard getting bearer token
+  shell: |
+    ns=kubernetes-dashboard
+    kubectl get secret -n $ns $(kubectl get serviceaccount admin-user -n $ns -o jsonpath="{.secrets[0].name}") -o jsonpath="{.data.token}"|base64 --decode
+  register: rc
+- name: This is bearer token to access Kubernetes dashboard at http://{{ansible_default_ipv4.address}}:8888 . In Google Chrome type 'thisisunsafe' on the page to dismiss security error
+  debug:
+    msg: '{{rc.stdout_lines}}'
+
+- name: Kubernetes dashboard starting "kubectl port-forward" for http://{{ansible_default_ipv4.address}}:8888 . Point you browser to http://{{ansible_default_ipv4.address}}:8888 to enter Kubernetes dashboard using bearer token above
+  shell: |
+    ns=kubernetes-dashboard
+    (kubectl port-forward `kubectl get po -l k8s-app=$ns -n $ns|grep Running|tail -1|awk '{print $1}'` -n $ns 8888:8443 --address 0.0.0.0 --pod-running-timeout=66s >/dev/null 2>&1 &)
+
+# Showing current cluster state
+# - name: "Kubernetes: running 'kubectl top node/pod'"
+#   shell: |
+#     kubectl top node
+#     kubectl top pod -A
+#   register: rc
+# - debug: msg='{{rc.stdout_lines}}'

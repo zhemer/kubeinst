@@ -1,0 +1,8 @@
+# ANSIBLE_DISPLAY_SKIPPED_HOSTS=no ansible-playbook -i localhost, -c local kube_inst.yml
+---
+
+- name: Deploying Kubernetes cluster on host {{ansible_play_hosts}}
+  # gather_facts: no
+  hosts: all
+  roles:
+    - role: role-kubeinst

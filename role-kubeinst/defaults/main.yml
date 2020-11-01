@@ -1,0 +1,48 @@
+---
+# defaults file for kube_inst
+
+repo_kubernetes_apt: 'deb https://apt.kubernetes.io/ kubernetes-xenial main'
+
+yum_repo_docker: https://download.docker.com/linux/centos/docker-ce.repo
+yum_repo_kube: https://packages.cloud.google.com/yum/repos/kubernetes-el7-x86_64/
+
+rm_packages_docker:
+  - docker
+  - docker-common
+  - docker-engine
+
+# packages to install
+inst_packages_docker:
+  - docker-ce
+  - docker-ce-cli
+  - containerd.io
+
+inst_packages:
+  - kubelet
+  - kubeadm
+  - kubectl
+  - socat
+
+cmd_kube_pull: kubeadm config images pull
+cmd_kube_init: kubeadm init --ignore-preflight-errors=NumCPU,swap --pod-network-cidr=10.244.0.0/16
+cmd_kube_getall: kubectl get all,sc,pv,pvc -A -o wide
+cmd_kube_taint: kubectl taint nodes --all node-role.kubernetes.io/master-
+
+cmd_kube_pod_network: kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml
+kube_inst_ms_inst: kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/download/v0.3.7/components.yaml
+kube_top:
+  - 'kubectl top node'
+  - 'kubectl top pod -A'
+kube_inst_add_sc: kubectl apply -f {{role_path}}/files/sc-local-storage.yaml
+kube_user_home: "{{lookup('env','HOME')}}"
+
+helm_gz: http://192.168.122.1/helm-v3.3.4-linux-amd64.tar.gz
+helm_dst: /usr/local/bin/helm
+helm_repo: https://kubernetes-charts.storage.googleapis.com/
+helm_inst_nfs: helm install nfs-server-provisioner kube/nfs-server-provisioner --set storageClass.defaultClass=true,persistence.size=512Mi
+
+service_list:
+  - docker
+  - kubelet
+
+kube_dashboard: kubectl apply -f https://raw.githubusercontent.com/kubernetes/dashboard/v2.0.0/aio/deploy/recommended.yaml
