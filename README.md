@@ -1,19 +1,34 @@
 # kubeinst
 
-kubeinst is an Ansible playbook, that deploys Kubernetes master node. The playboook adds repository for Docker and Kubernetes (Ubuntu/Centos), installs them, initializes Kubernetes master node with Flannel pod network, metrics-server, Kubernetes dashboard, Helm, nfs-server-provisioner. Tested on Ubuntu/Centos, can run on Debian/Redhat too.<br/>
-Nfs volume size can be specified in defaults/main.yaml:
+kubeinst is an Ansible playbook, that deploys Kubernetes master/worker nodes. The playboook adds repository for Docker and Kubernetes (Ubuntu/Centos), installs them, initializes Kubernetes master node with Flannel pod network, metrics-server, Kubernetes dashboard, Helm, nfs-server-provisioner, kubecolor. Tested on Ubuntu/Centos, can run on Debian/Redhat too.<br/>
+For nfs-server-provisioner Nfs server is deployed on master node by default or you can specify it address and export directory in defaults/main.yaml:
 ```console
-helm_inst_nfs: helm install nfs-server-provisioner kube/nfs-server-provisioner --set storageClass.defaultClass=true,persistence.size=512Mi
+nfs_server_addr: master
+nfs_server_export: /var/nfsroot
 ```
-How to run
+nfs-server-provisioner volume size can be specified in defaults/main.yaml:
 ```console
-# ANSIBLE_DISPLAY_SKIPPED_HOSTS=no ansible-playbook -i localhost, -c local kubeinst.yml
+helm_inst_nfs: helm install nfs-server-provisioner kube/nfs-server-provisioner --set storageClass.defaultClass=true,persistence.size=1Gi
 ```
 
-After cluster deployment it will look like about that
+## Extra variables
+Extra variables can be passed to playbook:
+- worker - specify a worker nodes
+
+## How to run
+To deploy master node run
+```console
+# ANSIBLE_DISPLAY_SKIPPED_HOSTS=no ansible-playbook -i vm-centos2, -u root --key-file ~/.ssh/id_rsa.vm kubeinst.yml
+```
+To deploy worker node run
+```console
+# ANSIBLE_DISPLAY_SKIPPED_HOSTS=no ansible-playbook -i vm-centos, -u root --key-file ~/.ssh/id_rsa.vm --extra-vars 'worker=true' kubeinst.yml
+```
+
+After deployment of master and worker nodes it will look like about that
 ```console
 root @ vm-centos2 : ~   2020-11-01 15:35:15    %Cpu(s):6.7us 6.7sy 0.0ni 86.7id 0.0wa 0.0hi 0.0si 0.0st 
-# kubectl get all,pv,pvc -A -owide
+# kubectl get all,pv,pvc,node -A -owide
 NAMESPACE              NAME                                             READY   STATUS    RESTARTS   AGE   IP              NODE               NOMINATED NODE   READINESS GATES
 default                pod/nfs-server-provisioner-0                     1/1     Running   2          25h   10.244.0.22     vm-centos2.local   <none>           <none>
 kube-system            pod/coredns-f9fd979d6-gm9gq                      1/1     Running   2          25h   10.244.0.20     vm-centos2.local   <none>           <none>
@@ -55,4 +70,9 @@ kubernetes-dashboard   replicaset.apps/kubernetes-dashboard-74d688b6bc        0 
 
 NAMESPACE   NAME                                      READY   AGE   CONTAINERS               IMAGES
 default     statefulset.apps/nfs-server-provisioner   1/1     25h   nfs-server-provisioner   quay.io/kubernetes_incubator/nfs-provisioner:v2.3.0
+
+NAMESPACE   NAME                    STATUS   ROLES    AGE   VERSION   INTERNAL-IP     EXTERNAL-IP   OS-IMAGE                KERNEL-VERSION                CONTAINER-RUNTIME
+            node/vm-centos.local    Ready    <none>   14h   v1.19.3   192.168.122.3   <none>        CentOS Linux 7 (Core)   3.10.0-1127.19.1.el7.x86_64   docker://19.3.13
+            node/vm-centos2.local   Ready    master   21h   v1.19.3   192.168.122.4   <none>        CentOS Linux 7 (Core)   3.10.0-1127.19.1.el7.x86_64   docker://19.3.13
+
 ```

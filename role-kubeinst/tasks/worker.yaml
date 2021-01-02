@@ -1,0 +1,21 @@
+# - name: Kubernetes reseting node with 'kubeadm reset' and removing previos node configuration from {{ansible_env.HOME}}/.kube
+#   shell: |
+#     kubeadm reset -f
+#     systemctl stop kubelet
+#     rm -rf {{ansible_env.HOME}}/.kube /etc/kubernetes
+#   become: yes
+
+- name: Kubernetes copy the join command to '{{ansible_nodename}}:/tmp'
+  copy: src=join-command dest=/tmp/join-command.sh mode=0777
+
+- name: Kubernetes join the node '{{ansible_nodename}}' to cluster
+  command: sh /tmp/join-command.sh
+
+- name: Kubernetes create directory '{{ansible_env.HOME}}/.kube'
+  file: path='{{ansible_env.HOME}}/.kube' state=directory mode=0755
+
+- name: Kubernetes copy admin.conf to '{{ansible_env.HOME}}/.kube/config'
+  copy: src=admin.conf dest={{ansible_env.HOME}}/.kube/config mode=0400
+
+- name: Kubernetes label the node '{{ansible_nodename}}' as worker
+  command: kubectl label node '{{ansible_nodename}}' node-role.kubernetes.io/worker=worker

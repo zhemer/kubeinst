@@ -1,5 +1,6 @@
-inv*
-aws*
 *.retry
-set_sudoer.yml
 test*
+join-command
+*reset*
+admin.conf
+tmp/*

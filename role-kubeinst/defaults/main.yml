@@ -29,20 +29,32 @@ cmd_kube_getall: kubectl get all,sc,pv,pvc -A -o wide
 cmd_kube_taint: kubectl taint nodes --all node-role.kubernetes.io/master-
 
 cmd_kube_pod_network: kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml
-kube_inst_ms_inst: kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/download/v0.3.7/components.yaml
+kube_inst_ms_inst: kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/download/v0.4.1/components.yaml
 kube_top:
   - 'kubectl top node'
   - 'kubectl top pod -A'
 kube_inst_add_sc: kubectl apply -f {{role_path}}/files/sc-local-storage.yaml
 kube_user_home: "{{lookup('env','HOME')}}"
 
-helm_gz: http://192.168.122.1/helm-v3.3.4-linux-amd64.tar.gz
+helm_gz: https://get.helm.sh/helm-v3.4.2-linux-amd64.tar.gz
 helm_dst: /usr/local/bin/helm
-helm_repo: https://kubernetes-charts.storage.googleapis.com/
-helm_inst_nfs: helm install nfs-server-provisioner kube/nfs-server-provisioner --set storageClass.defaultClass=true,persistence.size=512Mi
+helm_repos:
+  - stable https://charts.helm.sh/stable
+  - artifact-hub https://artifacthub.github.io/hub/chart
+helm_inst_nfs: helm install nfs-server-provisioner stable/nfs-server-provisioner --set storageClass.defaultClass=true,persistence.size=1Gi
 
 service_list:
   - docker
   - kubelet
 
-kube_dashboard: kubectl apply -f https://raw.githubusercontent.com/kubernetes/dashboard/v2.0.0/aio/deploy/recommended.yaml
+kube_dashboard: kubectl apply -f https://raw.githubusercontent.com/kubernetes/dashboard/v2.1.0/aio/deploy/recommended.yaml
+
+kube_apiserver_yaml: /etc/kubernetes/manifests/kube-apiserver.yaml
+
+kube_color_gz: https://github.com/dty1er/kubecolor/releases/download/v0.0.7/kubecolor_0.0.7_Linux_x86_64.tar.gz
+kube_color_tmp: /tmp/kc.tgz
+kube_color_dst: /usr/local/bin/kc
+
+nfs_server_addr: master
+# nfs_server_addr: 192.168.122.1
+nfs_server_export: /var/nfsroot

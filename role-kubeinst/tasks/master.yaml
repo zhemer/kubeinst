@@ -1,0 +1,236 @@
+# Installing Kubernetes
+- name: Kubernetes pulling images - '{{cmd_kube_pull}}'
+  command: '{{cmd_kube_pull}}'
+  become: yes
+  register: rc
+- debug: msg='{{rc.stdout_lines}}'
+
+- name: Kubernetes initializing cluster - '{{cmd_kube_init}}'
+  command: '{{cmd_kube_init}}'
+  become: yes
+  register: rc
+  ignore_errors: true
+- debug: msg='{{rc.stdout_lines}}'
+
+- name: Kubernetes setup configuration for current user - {{ansible_env.HOME}}
+  shell: '{{item}}'
+  with_items:
+    - "mkdir -p {{ansible_env.HOME}}/.kube"
+    - 'cp -i /etc/kubernetes/admin.conf {{ansible_env.HOME}}/.kube/config'
+    - 'chown {{ansible_user_id}}:{{ansible_user_id}} {{ansible_env.HOME}}/.kube/config'
+  args:
+    warn: false
+
+- name: Kubernetes creating bash completion for kubectl and kubeadm
+  shell: |
+    kubectl completion bash > /etc/profile.d/kubectl.sh
+    kubeadm completion bash > /etc/profile.d/kubeadm.sh
+
+- name: Kubernetes enable to schedule pods on the control-plane - '{{cmd_kube_taint}}'
+  shell: '{{cmd_kube_taint}}'
+  register: rc
+  ignore_errors: true
+- debug: msg='{{rc.stdout_lines}}'
+
+- name: "Kubernetes adding '--feature-gates=RemoveSelfLink=false' to kube-apiserver command line in {{kube_apiserver_yaml}}"
+  lineinfile:
+    path: '{{kube_apiserver_yaml}}'
+    state: present
+    insertafter: ".*- kube-apiserver"
+    line: '    - --feature-gates=RemoveSelfLink=false'
+
+
+###############################################
+###############################################
+# Installing PodPreset to set cluster wide time zone
+# - name: "{{kube_apiserver_yaml}} - adding '--runtime-config=settings.k8s.io/v1alpha1=true' to kube-apiserver command line"
+#   lineinfile:
+#     path: '{{kube_apiserver_yaml}}'
+#     state: present
+#     # regexp: '- kube-apiserver'
+#     insertafter: ".*- kube-apiserver"
+#     line: '    - --runtime-config=settings.k8s.io/v1alpha1=true'
+
+# - name: '{{kube_apiserver_yaml}} - testing for PodPreset'
+#   shell: grep -c PodPreset {{kube_apiserver_yaml}} || true
+#   register: test_grep
+
+# - name: '{{kube_apiserver_yaml}} - adding PodPreset'
+#   lineinfile:
+#     path: '{{kube_apiserver_yaml}}'
+#     backrefs: yes
+#     regexp: '^(.*--enable-admission-plugins.*)$'
+#     line: '\1,PodPreset'
+#   when: test_grep.stdout == "0"
+
+# - name: Kubernetes copying file podPresetTz.yaml to /tmp
+#   copy:
+#     src: podPresetTz.yaml
+#     dest: /tmp
+
+# - name: Kubernetes waiting for kube-apiserver startup
+#   shell: while [ "`curl -k https://192.168.122.4:6443/readyz 2>/dev/null`" != 'ok' ];do sleep 5;done;sleep 10
+
+# - name: Kubernetes applying PodPreset
+#   shell: kubectl apply -f /tmp/podPresetTz.yaml
+###############################################
+###############################################
+
+
+
+- name: Kubernetes installing pod network - '{{cmd_kube_pod_network}}'
+  shell: '{{cmd_kube_pod_network}}'
+  register: rc
+- debug: msg='{{rc.stdout_lines}}'
+
+- name: Kubernetes generate join command
+  command: kubeadm token create --print-join-command
+  register: join_command
+- name: Kubernetes copy join command to local file
+  local_action: copy content="{{ join_command.stdout_lines[0] }}" dest="./join-command"
+
+- name: Kubernetes copy /etc/kubernetes/admin.conf to local host
+  fetch:
+    src: /etc/kubernetes/admin.conf
+    dest: admin.conf
+    flat: yes
+
+
+# Installing metrics-server
+- name: metrics-server installing  - '{{kube_inst_ms_inst}}'
+  shell: '{{kube_inst_ms_inst}}'
+  register: rc
+- debug: msg='{{rc.stdout_lines}}'
+
+- name: metrics-server applying two patches
+  shell: |
+    kubectl -n kube-system patch deployment metrics-server --type='json' -p='[{"op": "add", "path": "/spec/template/spec/containers/0/args/-", "value": "--kubelet-insecure-tls"}]'
+    kubectl -n kube-system patch deployment metrics-server --type='json' -p='[{"op": "replace", "path": "/spec/template/spec/hostAliases", "value": [{"ip":"{{ansible_default_ipv4.address}}", "hostnames":["{{ansible_nodename}}"]}]}]'
+    kubectl -n kube-system patch deployment metrics-server --type='json' -p='[{"op": "add", "path": "/spec/template/spec/priorityClassName", "value": "system-cluster-critical"}]'
+  register: rc
+- debug: msg='{{rc.stdout_lines}}'
+
+
+# Installing kubecolor
+- name: kubecolor installing '{{kube_color_gz}}' into '{{kube_color_dst}}'
+  shell: |
+    wget -O {{kube_color_tmp}} {{kube_color_gz}}
+    tar zxvf {{kube_color_tmp}}
+    chmod +x kubecolor
+    mv -f kubecolor {{kube_color_dst}}
+    rm -rf {{kube_color_tmp}} LICENSE README.md
+  args:
+    warn: false
+
+# Installing NFS server on master
+- name: NFS splitting host IP address {{ansible_default_ipv4.address}}
+  set_fact: var={{ansible_default_ipv4.address.split(".")}}
+  when: nfs_server_addr == 'master'
+
+- name: NFS setting nfs_server_net variable
+  set_fact: nfs_server_net='{{var.0}}.{{var.1}}.0.0'
+  when: nfs_server_addr == 'master'
+
+- name: NFS createing directory '{{nfs_server_export}}'
+  file: path='{{nfs_server_export}}' state=directory mode=0755
+  when: nfs_server_addr == 'master'
+  become: yes
+
+- name: NFS createing file '/etc/exports' if not exist
+  file: path=/etc/exports state=touch mode=0644
+  when: nfs_server_addr == 'master'
+  become: yes
+
+- name: NFS adding access to {{nfs_server_export}} from {{nfs_server_net}}/16 to file '/etc/exports'
+  lineinfile:
+    path: /etc/exports
+    state: present
+    line: "{{nfs_server_export}} {{nfs_server_net}}/16(rw,no_root_squash,no_subtree_check)"
+  when: nfs_server_addr == 'master'
+  become: yes
+
+- name: NFS installing server
+  package: name=nfs-utils state=present
+  when: nfs_server_addr == 'master'
+  become: yes
+
+- name: NFS enabling and starting
+  service: name=nfs state=started enabled=yes
+  when: nfs_server_addr == 'master'
+  become: yes
+
+- name: NFS setting nfs_server_addr to '{{ansible_nodename}}'
+  set_fact: nfs_server_addr='{{ansible_nodename}}'
+  when: nfs_server_addr == 'master'
+
+
+# Installing Kubernetes dashboard
+- name: Kubernetes dashboard copying file dashboard-admin.yaml to /tmp
+  copy:
+    src: dashboard-admin.yaml
+    dest: /tmp
+
+- name: Kubernetes dashboard installing '{{kube_dashboard}}' and applying patch /tmp/dashboard-admin.yaml
+  shell: |
+    {{kube_dashboard}}
+    kubectl apply -f /tmp/dashboard-admin.yaml
+    ns=kubernetes-dashboard
+    kubectl patch deployment $ns --namespace $ns --type='json' -p='[{"op": "replace", "path": "/spec/template/spec/containers/0/args", "value": ["--auto-generate-certificates","--enable-insecure-login","--enable-skip-login","--namespace=kubernetes-dashboard"]}]'
+  register: rc
+- debug: msg='{{rc.stdout_lines}}'
+
+- name: Kubernetes dashboard getting bearer token
+  shell: |
+    ns=kubernetes-dashboard
+    kubectl get secret -n $ns $(kubectl get serviceaccount admin-user -n $ns -o jsonpath="{.secrets[0].name}") -o jsonpath="{.data.token}"|base64 --decode
+  register: rc
+- name: This is bearer token to access Kubernetes dashboard at http://{{ansible_default_ipv4.address}}:8888 . In Google Chrome type 'thisisunsafe' on the page to dismiss security error
+  debug:
+    msg: '{{rc.stdout_lines}}'
+
+- name: Kubernetes dashboard starting "kubectl port-forward" for http://{{ansible_default_ipv4.address}}:8888 . Point you browser to http://{{ansible_default_ipv4.address}}:8888 to enter Kubernetes dashboard using bearer token above
+  shell: |
+    ns=kubernetes-dashboard
+    (kubectl port-forward `kubectl get po -l k8s-app=$ns -n $ns|grep Running|tail -1|awk '{print $1}'` -n $ns 8888:8443 --address 0.0.0.0 --pod-running-timeout=66s >/dev/null 2>&1 &)
+
+
+# Installing Helm
+- name: Helm installing '{{helm_gz}}' into '{{helm_dst}}'
+  shell: |
+    wget -O /tmp/helm.tgz {{helm_gz}}
+    tar zxvf /tmp/helm.tgz linux-amd64/helm
+    chmod +x linux-amd64/helm
+    mv -f linux-amd64/helm {{helm_dst}}
+    rm -rf /tmp/helm.tgz linux-amd64
+    helm completion bash >/etc/profile.d/helm.sh
+  args:
+    warn: false
+
+# Installing Helm repos
+- name: Helm adding repositories
+  shell: |
+    helm repo add stable https://charts.helm.sh/stable
+    helm repo add artifact-hub https://artifacthub.github.io/hub/chart
+  ignore_errors: true
+
+# Installing Helm nfs-client-provisioner
+- name: Helm installing nfs-client-provisioner and setting its priorityClass to system-cluster-critical
+  shell: |
+    helm repo update
+    c=nfs-client-provisioner;helm install $c stable/$c --set nfs.server={{nfs_server_addr}} --set nfs.path={{nfs_server_export}} --set storageClass.name=nfs --set storageClass.defaultClass=true
+    kubectl patch deployment nfs-client-provisioner --type='json' -p='[{"op": "add", "path": "/spec/template/spec/priorityClassName", "value": "system-cluster-critical"}]'
+  # ignore_errors: true
+
+
+
+# Showing current cluster state
+# - name: "Kubernetes: running 'kubectl top node/pod'"
+#   shell: |
+#     kubectl top node
+#     kubectl top pod -A
+#   register: rc
+# - debug: msg='{{rc.stdout_lines}}'
+
+# - name: Kubernetes adding dnsutils test pod to the cluster
+#   command: kubectl apply -f https://k8s.io/examples/admin/dns/dnsutils.yaml
+#   when: dnsutils is defined
